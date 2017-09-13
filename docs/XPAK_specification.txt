@@ -108,3 +108,5 @@ PakDel [-d][-f] -p <PAKname> <file>                  : Deletes one file from the
 	-f : Forces the deletion of a file marked RO
 PakDir -p <PAKname>                            : Lists all the files in the PAK
 PakPak -p <PAKname>                            : Recovers deleted space from the PAK (copies to a tmp, deletes, renames)
+PakGet -p <PAKname> <file>                     : Extracts a file form the PAK
+
