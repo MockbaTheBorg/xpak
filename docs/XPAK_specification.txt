@@ -1,0 +1,110 @@
+Default (minimum) PAK file block size = 128 bytes:
+
+PAK file block types: Header and Directory. Everything else is data
+
+Header block format:
+
+Offset  0 = XPAK: File Signature (some 4 bytes which defines PAK file = "XPAK")
+Offset  3 = HEAD: Header Signature, indicates this is a header block = "HEAD"
+Offset  8 = nnnnnnnn: uint64_t number of files in this PAK file, or 0 if none (called N)
+Offset 16 = dddddddd: uint64_t block number (not file offset) of the first valid directory entry, or 0 if none (called D)
+Offset 24 = XPAKHEAD: File and Header signatures repeated, for file integrity verification
+Offset 32 = bbbb: uint32_t block size of this PAK (default = 128) (called B)
+Offsets 36 to 127 = other useful information, implementation specific, filled with 0x00 by default
+
+ -------!-------!-------!-------!
+!XPAKHEADnnnnnnnnddddddddXPAKHEAD
+!bbbb............................
+!................................
+!................................
+
+Directory block format:
+
+Offset  0 = XPAKDIR: Directory entry signature (used for finding directory entries manually later)
+Offset  7 = Live Flag: char "1" for live directory entry, "0" for deleted directory entry (human readable) 
+Offset  8 = ssssssss: uint64_t real size in bytes of the file for this directory entry (called S)
+Offset 16 = dddddddd: uint64_t block number (not file offset) of the next valid directory entry, or 0 if none (called D)
+Offset 24 = XPAKDIR: Directory entry signature repeated (used for finding directory entries manually later)
+Offset 31 = Live Flag: char Always a copy of Offset 7
+Offset 32 = XOR value: uint8_t value to which bytes are XORed when a file is added (0x00 = no XOR)
+Offset 33 = PK Flag: uint8_t 0x00 = not packed file, 0x01 = packed file
+Offset 34 = RO flag: uint8_t 0x00 R/W file, 0x01 = R-Only file
+Offset 35 = Encription Flag: uint8_t 0x00 = not encrypted, 0xnn = encrption type used
+Offset 36 to 63 = reserved for implementation specific data
+Offset 64 to 127 = file name
+Any not used bytes should be filled with 0x00 by default
+
+ -------!-------!-------!-------!
+!XPAKDIR1ssssssssddddddddXPAKDIR1
+!xpre............................
+!ffffffff->......................
+!................................
+
+
+"Empty" PAK file:
+
+. An "empty" PAK file contains only a header with both N and D set to 0x00, and its block size on B
+
+Creating a PAK file:
+
+. Create a PAK and write a header entry with both N and D set to 0x00, and B set to the desired block size.
+. The header needs to be of B block size
+
+Adding a file to an empty PAK file:
+
+. Open the PAK RW mode and get its block size (B) from the header
+. Compute the PAK size in blocks (real PAK size / block size)
+. Compute the real size in bytes of the file to add
+. Append a directory entry to the PAK with S set to the real file size and D set to 0x00
+. Append the file to the PAK
+. Seek to the header:
+	Add 1 to N in the header
+	If D in the header is 0x00, set it to the block number of the newly added directory entry
+	Else, follow the directory blocks until finding one with D = 0x00, and set its D to the newly added directory entry
+
+So ... an empty PAK file would be:
+
+Block 0
+ --------------------
+!XPAKHEAD N:0 D:0    !
+ -------------------- 
+
+A PAK file with one file on it would be:
+Block 0                Block 1               Block 2->
+ --------------------  --------------------  ------------- 
+!XPAKHEAD N:1 D:1    !!XPAKDIR1 S:size D:0 !! file1       !
+ --------------------  --------------------  ------------- 
+
+A PAK file with two files on it would be:
+Block 0                Block 1               Block 2->27    Block 28              Block 29-> 
+ --------------------  --------------------  -------------  --------------------  -------------  
+!XPAKHEAD N:2 D:1    !!XPAKDIR1 S:size D:28!! file1       !!XPAKDIR1 S:size D:0 !! file2       !
+ --------------------  --------------------  -------------  --------------------  ------------- 
+
+If you deleted file 1:
+Block 0                Block 1               Block 2->27    Block 28              Block 29-> 
+ --------------------  --------------------  -------------  --------------------  -------------  
+!XPAKHEAD N:1 D:28   !!XPAKDIR0 S:size D:28!! file1       !!XPAKDIR1 S:size D:0 !! file2       !
+ --------------------  --------------------  -------------  --------------------  ------------- 
+
+If you deleted file 2 instead:
+Block 0                Block 1               Block 2->27    Block 28              Block 29-> 
+ --------------------  --------------------  -------------  --------------------  -------------  
+!XPAKHEAD N:1 D:1    !!XPAKDIR0 S:size D:0 !! file1       !!XPAKDIR0 S:size D:0 !! file2       !
+ --------------------  --------------------  -------------  --------------------  ------------- 
+
+So the deleted files stay on the file, until the file is "packed" by the packing application
+
+A minimal implementation should have command line based applications like:
+
+PakAdd [-c n][-e n][-f][-r][-x n] -p <PAKname> <file...> : Adds one file to a PAK (creates the PAK file if necessary)
+    -c : Compression type used
+	-e : Encription type used (will ask on command line for the encription key)
+	-f : Forces the overwriting of an existing PAK file (instead of just appending the file)
+	-r : Makes the file RO inside the PAK
+	-x : XOR byte value
+PakDel [-d][-f] -p <PAKname> <file>                  : Deletes one file from the PAK
+    -d : Deletes the PAK file if it becomes empty
+	-f : Forces the deletion of a file marked RO
+PakDir -p <PAKname>                            : Lists all the files in the PAK
+PakPak -p <PAKname>                            : Recovers deleted space from the PAK (copies to a tmp, deletes, renames)
